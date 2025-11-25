@@ -1,0 +1,545 @@
+
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>精緻旅遊手冊產生器</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'wood-dark': '#1A1614',
+              'wood-card': '#26201B',
+              'wood-light': '#3E342B',
+              'wood-accent': '#C5A065',
+              'wood-text': '#EAE0D5',
+              'wood-muted': '#9A8C7D',
+            },
+            fontFamily: {
+              sans: ['Noto Sans TC', 'sans-serif'],
+              serif: ['Playfair Display', 'serif'],
+            },
+            animation: {
+              'fade-in': 'fadeIn 0.5s ease-out',
+              'slide-up': 'slideUp 0.5s ease-out',
+            },
+            keyframes: {
+              fadeIn: {
+                '0%': { opacity: '0' },
+                '100%': { opacity: '1' },
+              },
+              slideUp: {
+                '0%': { transform: 'translateY(20px)', opacity: '0' },
+                '100%': { transform: 'translateY(0)', opacity: '1' },
+              }
+            }
+          }
+        }
+      }
+    </script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=Playfair+Display:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+    
+    <style>
+      body { font-family: 'Noto Sans TC', sans-serif; background-color: #1A1614; color: #EAE0D5; }
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: #1A1614; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #3E342B; border-radius: 3px; }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #C5A065; }
+      .text-shadow { text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+    </style>
+
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.292.0",
+    "@google/genai": "https://esm.sh/@google/genai",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/"
+  }
+}
+</script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import ReactDOM from 'react-dom/client';
+        import { 
+            CloudSun, Plane, Hotel, Coins, CheckCircle2, MapPin, X, 
+            Utensils, Train, Camera, ShoppingBag, Home, Info, 
+            MessageCircle, Send, Sparkles, Map, Loader2, Settings, Plus, Trash2, Save, RotateCcw
+        } from 'lucide-react';
+        import { GoogleGenAI } from "@google/genai";
+
+        // --- 預設資料 (範本) ---
+        const DEFAULT_DATA = {
+            tripName: "京都・大阪",
+            tripDate: "2024.10.16 — 10.20",
+            apiKey: "", // 讓使用者自己填
+            flights: [
+                { airline: '中華航空', flightNo: 'CI0152', date: '10/16 (四)', route: 'TPE -> KIX', dep: '09:00', arr: '12:50' },
+                { airline: '中華航空', flightNo: 'CI0153', date: '10/20 (一)', route: 'KIX -> TPE', dep: '14:00', arr: '15:55' }
+            ],
+            preparation: [
+                { title: "護照", desc: "檢查有效期限是否超過 6 個月。" },
+                { title: "Visit Japan Web", desc: "提前填寫入境審查與海關申報。" },
+                { title: "日幣現金", desc: "建議攜帶約 ¥50,000 / 人。" },
+                { title: "網卡 / Roaming", desc: "確認 SIM 卡或漫遊已開通。" }
+            ],
+            itinerary: [
+                {
+                    id: 'day1', date: '10/16 (四)', title: '第一天：京都初印象',
+                    items: [
+                        { time: '14:00', title: '搭乘 Haruka', location: '關西機場 -> 京都', type: 'transport', description: '約 75 分鐘車程。' },
+                        { time: '15:30', title: '飯店 Check-in', location: "Hotel The M’s Kyoto", type: 'hotel', mapQuery: "Hotel The M’s Kyoto", description: '時尚設計風格飯店。', imageUrl: 'https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?auto=format&fit=crop&w=800&q=80' },
+                        { time: '16:10', title: '嵐山竹林', location: '嵐山', type: 'activity', mapQuery: 'Arashiyama Bamboo Grove', description: '京都必訪景點。', imageUrl: 'https://images.unsplash.com/photo-1528164344705-47542687000d?auto=format&fit=crop&w=800&q=80' }
+                    ]
+                }
+            ]
+        };
+
+        // --- Helper Components ---
+        const Modal = ({ children, onClose }) => (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-wood-dark/95 backdrop-blur-md animate-fade-in" onClick={onClose}>
+                <div className="bg-wood-card border border-wood-light w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-slide-up relative shadow-[0_0_50px_rgba(0,0,0,0.6)]" onClick={(e) => e.stopPropagation()}>
+                    {children}
+                </div>
+            </div>
+        );
+
+        // --- AI Service ---
+        const getAiService = (key) => key ? new GoogleGenAI({ apiKey: key }) : null;
+        const descriptionCache = {};
+
+        const getPlaceDescription = async (ai, placeName, location) => {
+            if (!ai) return "請先在編輯模式設定 API Key。";
+            const cacheKey = `${placeName}-${location}`;
+            if (descriptionCache[cacheKey]) return descriptionCache[cacheKey];
+            try {
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: `請用繁體中文 (台灣用語) 為遊客提供關於「${location} ${placeName}」的迷人、簡短旅遊介紹 (最多 80 字)。`,
+                });
+                const text = response.text || "暫無介紹。";
+                descriptionCache[cacheKey] = text;
+                return text;
+            } catch (error) { return "無法載入 AI 介紹。"; }
+        };
+
+        const getTravelAssistantResponse = async (ai, userMessage, context) => {
+            if (!ai) return "請先在編輯模式設定 API Key 以使用 AI 助手。";
+            try {
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: userMessage,
+                    config: { systemInstruction: `You are a travel assistant. Context: ${context}. Answer in Traditional Chinese.` }
+                });
+                return response.text;
+            } catch (e) { return "連線錯誤。"; }
+        };
+
+        // --- Components ---
+        
+        // 1. Attraction Modal
+        const AttractionModal = ({ item, apiKey, onClose }) => {
+            const [aiDesc, setAiDesc] = useState(null);
+            const [loading, setLoading] = useState(false);
+            
+            useEffect(() => {
+                const fetchDesc = async () => {
+                    if (item.mapQuery && apiKey) {
+                        setLoading(true);
+                        const ai = getAiService(apiKey);
+                        const desc = await getPlaceDescription(ai, item.title, item.location);
+                        setAiDesc(desc);
+                        setLoading(false);
+                    }
+                };
+                fetchDesc();
+            }, [item, apiKey]);
+
+            const seed = item.title.length * 123;
+            const img = item.imageUrl || `https://picsum.photos/seed/${seed}/800/600`;
+            
+            return (
+                <Modal onClose={onClose}>
+                    <button onClick={onClose} className="absolute top-4 right-4 z-10 bg-wood-dark/60 p-2 rounded-full hover:text-wood-accent"><X size={20}/></button>
+                    <div className="relative h-64 bg-wood-dark shrink-0">
+                        <img src={img} className="w-full h-full object-cover opacity-90"/>
+                        <div className="absolute bottom-0 left-0 p-6 w-full bg-gradient-to-t from-wood-card to-transparent">
+                            <h3 className="text-2xl font-serif italic text-wood-text text-shadow">{item.title}</h3>
+                            <p className="text-wood-accent text-xs tracking-widest uppercase flex items-center mt-1"><MapPin size={12} className="mr-1"/>{item.location}</p>
+                        </div>
+                    </div>
+                    <div className="p-6 overflow-y-auto custom-scrollbar">
+                        <p className="text-wood-text text-sm leading-loose font-light mb-6">{item.description || '暫無說明'}</p>
+                        <div className="bg-wood-dark/50 border border-wood-light p-4 mb-6 relative">
+                            <div className="flex gap-2 text-wood-accent mb-2"><Sparkles size={14}/> <span className="text-xs font-serif italic">AI 導覽</span></div>
+                            {loading ? <Loader2 className="animate-spin text-wood-muted" size={16}/> : <p className="text-xs text-wood-text/80 leading-relaxed font-light">{aiDesc || (apiKey ? '無法取得資訊' : '請設定 API Key')}</p>}
+                        </div>
+                        {item.mapQuery && <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.mapQuery)}`} target="_blank" className="block w-full text-center bg-wood-text text-wood-dark py-3 text-xs tracking-widest hover:bg-wood-accent uppercase font-medium">開啟地圖</a>}
+                    </div>
+                </Modal>
+            );
+        };
+
+        // 2. Info Tab
+        const InfoTab = ({ data, openModal }) => {
+            const [yen, setYen] = useState('');
+            const twd = yen ? Math.round(parseFloat(yen) * 0.215) : 0;
+            return (
+                <div className="space-y-8 animate-fade-in pb-12">
+                    <div className="text-center pt-4">
+                        <div className="inline-block border-y border-wood-accent/30 py-1 mb-2 px-4"><span className="text-[10px] tracking-[0.3em] text-wood-accent uppercase">行程總覽</span></div>
+                        <h2 className="text-3xl font-serif italic text-wood-text">{data.tripName}</h2>
+                        <p className="text-xs text-wood-muted tracking-[0.2em] mt-2">{data.tripDate}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        {['hotel', 'prep'].map(type => (
+                            <button key={type} onClick={() => openModal(type)} className="bg-wood-card border border-wood-light p-4 hover:border-wood-accent hover:shadow-lg transition-all group relative overflow-hidden">
+                                {type === 'hotel' ? <Hotel size={24} className="text-wood-accent mb-3 group-hover:scale-110 transition-transform origin-left"/> : <CheckCircle2 size={24} className="text-wood-accent mb-3 group-hover:scale-110 transition-transform origin-left"/>}
+                                <span className="block text-sm font-medium tracking-widest text-wood-text">{type === 'hotel' ? '住宿資訊' : '行前準備'}</span>
+                            </button>
+                        ))}
+                    </div>
+                    <div className="bg-wood-card border border-wood-light p-6">
+                        <div className="flex items-center gap-2 mb-4 text-wood-accent"><Coins size={16}/><h3 className="font-serif italic">匯率換算</h3></div>
+                        <div className="flex items-center gap-4">
+                            <input type="number" value={yen} onChange={e=>setYen(e.target.value)} placeholder="JPY" className="w-full bg-wood-dark border border-wood-light p-2 text-center text-wood-text focus:border-wood-accent outline-none"/>
+                            <span className="text-wood-accent font-serif italic">兌</span>
+                            <div className="w-full bg-wood-dark/50 border-b border-wood-accent/50 p-2 text-center text-wood-text">${twd.toLocaleString()}</div>
+                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-2 px-1 text-wood-accent"><Plane size={16}/><h3 className="font-serif italic text-wood-text">航班資訊</h3></div>
+                        {data.flights.map((f, i) => (
+                            <div key={i} className="bg-wood-card border border-wood-light p-4 flex justify-between items-center">
+                                <div><div className="text-xs text-wood-accent font-bold tracking-wider">{f.airline} {f.flightNo}</div><div className="text-[10px] text-wood-muted mt-1">{f.route}</div></div>
+                                <div className="text-right"><div className="text-xl font-serif text-wood-text">{f.dep} <span className="text-xs text-wood-muted">出發</span></div></div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // 3. Day View
+        const DayView = ({ day, onSelect }) => {
+            const getIcon = (t) => {
+                if(t==='food') return <Utensils size={14}/>;
+                if(t==='transport') return <Train size={14}/>;
+                if(t==='hotel') return <Home size={14}/>;
+                if(t==='shopping') return <ShoppingBag size={14}/>;
+                return <MapPin size={14}/>;
+            }
+            return (
+                <div className="pb-24 animate-fade-in">
+                    <div className="sticky top-0 z-20 py-4 bg-wood-dark/95 backdrop-blur-md border-b border-wood-light/30 mb-8 -mx-6 px-6">
+                        <span className="text-[10px] font-mono text-wood-accent block mb-1 tracking-widest">{day.date}</span>
+                        <h2 className="text-xl font-serif italic text-wood-text">{day.title}</h2>
+                    </div>
+                    <div className="relative pl-2 space-y-6">
+                        <div className="absolute left-[19px] top-2 bottom-0 w-[1px] bg-wood-light"></div>
+                        {day.items.map((item, idx) => (
+                            <div key={idx} className="relative flex gap-4 group">
+                                <div className="relative z-10 w-10 h-10 bg-wood-dark border border-wood-light flex items-center justify-center text-wood-muted group-hover:border-wood-accent group-hover:text-wood-accent transition-colors rotate-45 shrink-0"><div className="-rotate-45">{getIcon(item.type)}</div></div>
+                                <div onClick={() => (item.mapQuery||item.type==='hotel') && onSelect(item)} className={`flex-1 bg-wood-card border border-wood-light p-4 relative transition-all ${item.mapQuery||item.type==='hotel' ? 'cursor-pointer hover:border-wood-accent hover:shadow-lg' : ''}`}>
+                                    <div className="flex justify-between mb-2"><span className="font-mono text-xs text-wood-accent/80">{item.time}</span></div>
+                                    <h3 className="font-medium text-wood-text mb-1">{item.title}</h3>
+                                    <div className="flex items-center text-wood-muted text-xs mb-2"><MapPin size={10} className="mr-1"/>{item.location}</div>
+                                    {item.description && <p className="text-xs text-wood-text/60 font-light border-t border-wood-light/50 pt-2">{item.description}</p>}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // 4. Edit Form Component
+        const EditForm = ({ data, onSave, onCancel }) => {
+            const [formData, setFormData] = useState(data);
+            const [activeSection, setActiveSection] = useState('general'); // general, flight, prep, day0, day1...
+
+            const updateField = (field, val) => setFormData({...formData, [field]: val});
+            
+            const handleFlightChange = (idx, field, val) => {
+                const newFlights = [...formData.flights];
+                newFlights[idx][field] = val;
+                setFormData({...formData, flights: newFlights});
+            }
+            const addFlight = () => setFormData({...formData, flights: [...formData.flights, { airline: '', flightNo: '', date: '', route: '', dep: '', arr: '' }]});
+            const removeFlight = (idx) => setFormData({...formData, flights: formData.flights.filter((_, i) => i !== idx)});
+
+            const handlePrepChange = (idx, field, val) => {
+                const newPrep = [...formData.preparation];
+                newPrep[idx][field] = val;
+                setFormData({...formData, preparation: newPrep});
+            }
+            const addPrep = () => setFormData({...formData, preparation: [...formData.preparation, { title: '', desc: '' }]});
+            const removePrep = (idx) => setFormData({...formData, preparation: formData.preparation.filter((_, i) => i !== idx)});
+
+            const handleItineraryChange = (dayIdx, field, val) => {
+                const newItin = [...formData.itinerary];
+                newItin[dayIdx][field] = val;
+                setFormData({...formData, itinerary: newItin});
+            }
+            const addItem = (dayIdx) => {
+                const newItin = [...formData.itinerary];
+                newItin[dayIdx].items.push({ time: '00:00', title: '新行程', location: '', type: 'activity', description: '' });
+                setFormData({...formData, itinerary: newItin});
+            }
+            const updateItem = (dayIdx, itemIdx, field, val) => {
+                const newItin = [...formData.itinerary];
+                newItin[dayIdx].items[itemIdx][field] = val;
+                setFormData({...formData, itinerary: newItin});
+            }
+            const removeItem = (dayIdx, itemIdx) => {
+                const newItin = [...formData.itinerary];
+                newItin[dayIdx].items = newItin[dayIdx].items.filter((_, i) => i !== itemIdx);
+                setFormData({...formData, itinerary: newItin});
+            }
+            const addDay = () => {
+                const id = `day${formData.itinerary.length + 1}`;
+                setFormData({...formData, itinerary: [...formData.itinerary, { id, date: '日期', title: '新的一天', items: [] }]});
+            }
+            const removeDay = (idx) => {
+                if(!confirm("確定刪除這一天？")) return;
+                setFormData({...formData, itinerary: formData.itinerary.filter((_, i) => i !== idx)});
+            }
+
+            return (
+                <div className="bg-wood-dark min-h-screen text-wood-text p-4 pb-24 overflow-y-auto">
+                    <div className="sticky top-0 bg-wood-dark z-20 pb-4 border-b border-wood-light mb-6 flex justify-between items-center">
+                        <h2 className="text-xl font-serif italic text-wood-accent">編輯行程</h2>
+                        <div className="flex gap-2">
+                            <button onClick={onCancel} className="px-3 py-1 text-xs border border-wood-muted text-wood-muted rounded hover:bg-wood-light">取消</button>
+                            <button onClick={() => onSave(formData)} className="px-3 py-1 text-xs bg-wood-accent text-wood-dark font-bold rounded flex items-center gap-1 hover:bg-[#D4AF37]"><Save size={14}/> 儲存</button>
+                        </div>
+                    </div>
+
+                    {/* API Key & General */}
+                    <div className="space-y-4 mb-8">
+                        <h3 className="text-wood-accent text-sm font-bold uppercase tracking-widest border-b border-wood-light pb-2">基本設定</h3>
+                        <div className="grid gap-3">
+                            <div>
+                                <label className="block text-xs text-wood-muted mb-1">API Key (Gemini)</label>
+                                <input type="text" value={formData.apiKey} onChange={e=>updateField('apiKey', e.target.value)} placeholder="AIzaSy..." className="w-full bg-wood-card border border-wood-light p-2 text-sm text-wood-text focus:border-wood-accent outline-none"/>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-wood-muted mb-1">旅遊名稱</label>
+                                <input type="text" value={formData.tripName} onChange={e=>updateField('tripName', e.target.value)} className="w-full bg-wood-card border border-wood-light p-2 text-sm text-wood-text focus:border-wood-accent outline-none"/>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-wood-muted mb-1">日期範圍</label>
+                                <input type="text" value={formData.tripDate} onChange={e=>updateField('tripDate', e.target.value)} className="w-full bg-wood-card border border-wood-light p-2 text-sm text-wood-text focus:border-wood-accent outline-none"/>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Flights */}
+                    <div className="space-y-4 mb-8">
+                        <div className="flex justify-between items-center border-b border-wood-light pb-2">
+                            <h3 className="text-wood-accent text-sm font-bold uppercase tracking-widest">航班</h3>
+                            <button onClick={addFlight} className="text-wood-accent hover:text-white"><Plus size={16}/></button>
+                        </div>
+                        {formData.flights.map((f, i) => (
+                            <div key={i} className="bg-wood-card p-3 border border-wood-light relative">
+                                <button onClick={()=>removeFlight(i)} className="absolute top-2 right-2 text-wood-muted hover:text-red-400"><Trash2 size={14}/></button>
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                    <input value={f.airline} onChange={e=>handleFlightChange(i,'airline',e.target.value)} placeholder="航空" className="bg-wood-dark p-1 text-xs border border-wood-light"/>
+                                    <input value={f.flightNo} onChange={e=>handleFlightChange(i,'flightNo',e.target.value)} placeholder="班號" className="bg-wood-dark p-1 text-xs border border-wood-light"/>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <input value={f.dep} onChange={e=>handleFlightChange(i,'dep',e.target.value)} placeholder="出發" className="bg-wood-dark p-1 text-xs border border-wood-light"/>
+                                    <input value={f.arr} onChange={e=>handleFlightChange(i,'arr',e.target.value)} placeholder="抵達" className="bg-wood-dark p-1 text-xs border border-wood-light"/>
+                                    <input value={f.date} onChange={e=>handleFlightChange(i,'date',e.target.value)} placeholder="日期" className="bg-wood-dark p-1 text-xs border border-wood-light"/>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Preparation */}
+                    <div className="space-y-4 mb-8">
+                        <div className="flex justify-between items-center border-b border-wood-light pb-2">
+                            <h3 className="text-wood-accent text-sm font-bold uppercase tracking-widest">行前準備</h3>
+                            <button onClick={addPrep} className="text-wood-accent hover:text-white"><Plus size={16}/></button>
+                        </div>
+                        {formData.preparation.map((p, i) => (
+                            <div key={i} className="flex gap-2 items-center">
+                                <input value={p.title} onChange={e=>handlePrepChange(i,'title',e.target.value)} placeholder="項目" className="w-1/3 bg-wood-card p-2 text-xs border border-wood-light"/>
+                                <input value={p.desc} onChange={e=>handlePrepChange(i,'desc',e.target.value)} placeholder="說明" className="flex-1 bg-wood-card p-2 text-xs border border-wood-light"/>
+                                <button onClick={()=>removePrep(i)} className="text-wood-muted hover:text-red-400"><Trash2 size={14}/></button>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Itinerary */}
+                    <div className="space-y-6">
+                        <div className="flex justify-between items-center border-b border-wood-light pb-2">
+                            <h3 className="text-wood-accent text-sm font-bold uppercase tracking-widest">每日行程</h3>
+                            <button onClick={addDay} className="text-wood-accent hover:text-white flex items-center text-xs gap-1"><Plus size={14}/> 新增天數</button>
+                        </div>
+                        {formData.itinerary.map((day, dIdx) => (
+                            <div key={dIdx} className="border border-wood-light bg-wood-card/30 p-4 rounded">
+                                <div className="flex justify-between items-start mb-4">
+                                    <div className="flex-1 space-y-2">
+                                        <input value={day.date} onChange={e=>handleItineraryChange(dIdx,'date',e.target.value)} className="bg-wood-dark p-1 text-xs text-wood-accent border border-wood-light w-full"/>
+                                        <input value={day.title} onChange={e=>handleItineraryChange(dIdx,'title',e.target.value)} className="bg-wood-dark p-1 text-sm font-bold text-wood-text border border-wood-light w-full"/>
+                                    </div>
+                                    <button onClick={()=>removeDay(dIdx)} className="ml-2 text-wood-muted hover:text-red-400"><Trash2 size={16}/></button>
+                                </div>
+                                
+                                <div className="space-y-3 pl-2 border-l border-wood-muted/30">
+                                    {day.items.map((item, iIdx) => (
+                                        <div key={iIdx} className="bg-wood-dark p-3 border border-wood-light text-xs space-y-2 relative group">
+                                            <button onClick={()=>removeItem(dIdx, iIdx)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-wood-muted hover:text-red-400"><Trash2 size={12}/></button>
+                                            <div className="flex gap-2">
+                                                <input value={item.time} onChange={e=>updateItem(dIdx, iIdx, 'time', e.target.value)} className="w-16 bg-wood-card p-1 border border-wood-light" placeholder="時間"/>
+                                                <select value={item.type} onChange={e=>updateItem(dIdx, iIdx, 'type', e.target.value)} className="bg-wood-card p-1 border border-wood-light">
+                                                    <option value="activity">景點</option><option value="food">餐廳</option><option value="transport">交通</option><option value="hotel">住宿</option><option value="shopping">購物</option>
+                                                </select>
+                                                <input value={item.title} onChange={e=>updateItem(dIdx, iIdx, 'title', e.target.value)} className="flex-1 bg-wood-card p-1 border border-wood-light" placeholder="標題"/>
+                                            </div>
+                                            <input value={item.location} onChange={e=>updateItem(dIdx, iIdx, 'location', e.target.value)} className="w-full bg-wood-card p-1 border border-wood-light" placeholder="地點/副標"/>
+                                            <textarea value={item.description} onChange={e=>updateItem(dIdx, iIdx, 'description', e.target.value)} className="w-full bg-wood-card p-1 border border-wood-light h-16" placeholder="描述"/>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input value={item.mapQuery||''} onChange={e=>updateItem(dIdx, iIdx, 'mapQuery', e.target.value)} className="bg-wood-card p-1 border border-wood-light" placeholder="Google Maps 關鍵字"/>
+                                                <input value={item.imageUrl||''} onChange={e=>updateItem(dIdx, iIdx, 'imageUrl', e.target.value)} className="bg-wood-card p-1 border border-wood-light" placeholder="圖片網址"/>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <button onClick={()=>addItem(dIdx)} className="w-full py-2 border border-dashed border-wood-muted text-wood-muted hover:text-wood-accent hover:border-wood-accent text-xs">+ 新增行程</button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [data, setData] = useState(() => {
+                const saved = localStorage.getItem('tripData');
+                return saved ? JSON.parse(saved) : DEFAULT_DATA;
+            });
+            const [isEdit, setIsEdit] = useState(false);
+            const [activeTab, setActiveTab] = useState('info');
+            const [selectedItem, setSelectedItem] = useState(null);
+            const [modalType, setModalType] = useState(null);
+            const [showChat, setShowChat] = useState(false);
+            const [chatHist, setChatHist] = useState([]);
+            const [msg, setMsg] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            const saveData = (newData) => {
+                setData(newData);
+                localStorage.setItem('tripData', JSON.stringify(newData));
+                setIsEdit(false);
+            };
+
+            const resetData = () => {
+                if(confirm("確定重置回預設範本？您的修改將消失。")) {
+                    setData(DEFAULT_DATA);
+                    localStorage.setItem('tripData', JSON.stringify(DEFAULT_DATA));
+                }
+            };
+
+            const handleSend = async (e) => {
+                e.preventDefault();
+                if(!msg.trim()) return;
+                const userMsg = msg;
+                setMsg('');
+                setChatHist(p => [...p, {role: 'user', text: userMsg}]);
+                setLoading(true);
+                const ai = getAiService(data.apiKey);
+                const res = await getTravelAssistantResponse(ai, userMsg, JSON.stringify(data.itinerary));
+                setChatHist(p => [...p, {role: 'model', text: res}]);
+                setLoading(false);
+            };
+
+            if(isEdit) return <EditForm data={data} onSave={saveData} onCancel={()=>setIsEdit(false)} />;
+
+            return (
+                <div className="max-w-md mx-auto min-h-screen bg-wood-dark shadow-2xl relative border-x border-wood-light font-sans flex flex-col">
+                    {/* Header */}
+                    <header className="bg-wood-dark/95 backdrop-blur-md sticky top-0 z-30 pt-8 border-b border-wood-light/50">
+                        <div className="flex justify-between items-start px-6 mb-4">
+                            <div>
+                                <p className="text-[10px] text-wood-accent tracking-[0.25em] uppercase mb-1">Travel Guide</p>
+                                <h1 className="text-2xl font-serif italic text-wood-text tracking-wide">{data.tripName}</h1>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={()=>setIsEdit(true)} className="p-2 rounded-full border border-wood-light text-wood-muted hover:text-wood-accent hover:bg-wood-card"><Settings size={18}/></button>
+                                <button onClick={()=>setShowChat(!showChat)} className="p-2 rounded-full border border-wood-light text-wood-muted hover:text-wood-accent hover:bg-wood-card"><MessageCircle size={18}/></button>
+                            </div>
+                        </div>
+                        <div className="flex overflow-x-auto no-scrollbar px-6 gap-6">
+                            <button onClick={()=>setActiveTab('info')} className={`pb-3 text-xs tracking-widest whitespace-nowrap uppercase font-medium border-b-2 transition-colors ${activeTab==='info'?'text-wood-accent border-wood-accent':'text-wood-muted border-transparent'}`}>資訊</button>
+                            {data.itinerary.map(day => (
+                                <button key={day.id} onClick={()=>setActiveTab(day.id)} className={`pb-3 text-xs tracking-widest whitespace-nowrap uppercase font-medium border-b-2 transition-colors font-serif ${activeTab===day.id?'text-wood-accent border-wood-accent':'text-wood-muted border-transparent'}`}>{day.date.split(' ')[0]}</button>
+                            ))}
+                        </div>
+                    </header>
+
+                    <main className="flex-1 p-6 overflow-y-auto custom-scrollbar">
+                        {activeTab === 'info' && <InfoTab data={data} openModal={setModalType} />}
+                        {data.itinerary.map(day => activeTab === day.id && <DayView key={day.id} day={day} onSelect={setSelectedItem} />)}
+                    </main>
+
+                    {/* Chat Overlay */}
+                    {showChat && (
+                        <div className="absolute inset-0 z-40 bg-wood-dark/95 backdrop-blur-xl flex flex-col animate-slide-up">
+                            <div className="flex justify-between p-4 border-b border-wood-light">
+                                <h3 className="text-wood-accent font-serif italic">AI 專屬管家</h3>
+                                <button onClick={()=>setShowChat(false)}><X className="text-wood-muted" size={20}/></button>
+                            </div>
+                            <div className="flex-1 p-4 overflow-y-auto space-y-4">
+                                {chatHist.length===0 && <div className="text-center mt-20 text-wood-muted opacity-50"><MessageCircle size={40} className="mx-auto mb-4"/>{data.apiKey ? '請問有什麼需要幫忙？' : '請先至編輯模式設定 API Key'}</div>}
+                                {chatHist.map((m,i)=>(<div key={i} className={`flex ${m.role==='user'?'justify-end':'justify-start'}`}><div className={`max-w-[85%] p-3 text-sm rounded ${m.role==='user'?'bg-wood-accent text-wood-dark':'bg-wood-card border border-wood-light text-wood-text'}`}>{m.text}</div></div>))}
+                                {loading && <div className="text-wood-accent text-xs animate-pulse">思考中...</div>}
+                            </div>
+                            <form onSubmit={handleSend} className="p-3 border-t border-wood-light flex gap-2">
+                                <input value={msg} onChange={e=>setMsg(e.target.value)} className="flex-1 bg-wood-card border border-wood-light p-2 text-sm text-wood-text focus:border-wood-accent outline-none" placeholder="輸入訊息..."/>
+                                <button type="submit" disabled={!data.apiKey} className="bg-wood-accent text-wood-dark px-4 py-2 disabled:opacity-50"><Send size={18}/></button>
+                            </form>
+                        </div>
+                    )}
+
+                    {/* Modals */}
+                    {selectedItem && <AttractionModal item={selectedItem} apiKey={data.apiKey} onClose={()=>setSelectedItem(null)} />}
+                    {modalType && (
+                        <Modal onClose={()=>setModalType(null)}>
+                            <div className="flex justify-between p-4 border-b border-wood-light bg-wood-card">
+                                <h3 className="text-wood-accent font-serif italic">{modalType==='hotel'?'住宿列表':'準備清單'}</h3>
+                                <button onClick={()=>setModalType(null)}><X className="text-wood-muted" size={20}/></button>
+                            </div>
+                            <div className="p-6 overflow-y-auto custom-scrollbar space-y-4">
+                                {modalType==='hotel' 
+                                    ? data.itinerary.flatMap(d=>d.items).filter(i=>i.type==='hotel').map((h,i)=>(<div key={i} className="border-l-2 border-wood-accent pl-4"><h4 className="text-wood-text font-medium">{h.title}</h4><p className="text-xs text-wood-muted mb-2">{h.location}</p><p className="text-sm text-wood-text/70 font-light">{h.description}</p></div>))
+                                    : data.preparation.map((p,i)=>(<div key={i} className="flex gap-3"><div className="mt-1 w-2 h-2 bg-wood-accent shrink-0 rotate-45"></div><div><h4 className="text-wood-text text-sm">{p.title}</h4><p className="text-xs text-wood-muted font-light">{p.desc}</p></div></div>))
+                                }
+                            </div>
+                        </Modal>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
